@@ -195,29 +195,7 @@ function renderToast(text) {
   toast.setAttribute("text", text);
   toast.show();
 }
-// Wait why are we doing this
-function getGpsSuccess(position, roomObj) {
-  var radius = 6371000; // Radius of the earth
-  var phi1 = position.coords.latitude * (Math.PI / 180);
-  var phi2 = roomObj.latitude * (Math.PI / 180);
-  var deltaPhi = (roomObj.latitude-position.coords.latitude) * (Math.PI / 180);
-  var deltaLambda = (roomObj.longitude-position.coords.longitude) * (Math.PI / 180);
-  var a = Math.sin(deltaPhi/2) * Math.sin(deltaPhi/2) + Math.cos(phi1) *
-  Math.cos(phi2) *Math.sin(deltaLambda/2) * Math.sin(deltaLambda/2);
-  var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-  var d = radius * c;
-  if (d > 200) {
-    console.log("Too far away from EPS")
-    return;
-  }
-  map = document.getElementById("map");
-  marker = document.createElement("google-map-marker");
-  marker.latitude = position.coords.latitude;
-  marker.longitude = position.coords.longitude;
-  marker.draggable = false;
-  marker.title = "Your face";
-  map.appendChild(marker);
-}
+
 function isStandardClass(letter) {
   var standardPeriods = ["O", "A", "B", "C", "D", "E", "F", "G", "H"];
   return standardPeriods.indexOf(letter) >= 0;
