@@ -1,14 +1,12 @@
 import datetime
 import json
-import os
 import time
 
-import requests
-from google.cloud import secretmanager, storage
+from google.cloud import storage
 from requests.models import HTTPError
 
-ENDPOINT_URL = "https://four11.eastsideprep.org/epsnet/courses/{}"
-SECRET_REQUEST = {"name": "projects/epschedule-v2/secrets/four11_key/versions/1"}
+from cron import four11
+
 PARSEABLE_PERIODS = ["A", "B", "C", "D", "E", "F", "G", "H"]
 FREE_PERIOD_CLASS = {
     "room": None,
@@ -17,10 +15,7 @@ FREE_PERIOD_CLASS = {
     "teacher_username": None,
     "department": None,
 }
-
-
-def gen_auth_header(api_key):
-    return {"Authorization": "Bearer {}".format(api_key)}
+MAX_ERRORS = 10
 
 
 # Return the year of the current graduating class
@@ -67,24 +62,18 @@ def decode_trimester_classes(four11_response):
     return trimester_classes
 
 
-def download_schedule(session, api_key, username, year):
+def download_schedule(client, username, year):
     person = {"classes": []}
 
     # For each trimester
     for term_id in range(1, 4):
-        req = session.get(
-            ENDPOINT_URL.format(username),
-            headers=gen_auth_header(api_key),
-            params={"term_id": str(term_id)},
-        )
-        if req.status_code == 500:
-            raise NameError("Student {} not found in four11 database".format(username))
-        briggs_person = json.loads(req.content)
+        briggs_person = client.get_courses(username, term_id)
         person["classes"].append(decode_trimester_classes(briggs_person))
 
     individual = briggs_person["individual"]
     person["sid"] = individual["id"]
-    person["nickname"] = individual["nickname"]
+    if individual.get("preferred_name"):
+        person["preferred_name"] = individual["preferred_name"]
     person["firstname"] = individual["firstname"]
     person["lastname"] = individual["lastname"]
     person["gradyear"] = individual["gradyear"]
@@ -102,14 +91,13 @@ def download_schedule(session, api_key, username, year):
     if person["gradyear"]:
         person["grade"] = 12 - (person["gradyear"] - year)
 
-    print("Decoded " + person["username"])
     return person
 
 
-def download_schedule_with_retry(session, api_key, username, year):
+def download_schedule_with_retry(client, username, year):
     for i in range(3):
         try:
-            return download_schedule(session, api_key, username, year)
+            return download_schedule(client, username, year)
         except (HTTPError, ValueError) as e:  # catches HTTP and JSON errors
             print(f"Error for {username}: {e}, retrying")
             if i != 2:
@@ -118,13 +106,9 @@ def download_schedule_with_retry(session, api_key, username, year):
                 raise e
 
 
-def crawl_schedules():
+def crawl_schedules(dry_run=False, verbose=False):
+    print(f"Starting schedule crawl, dry_run={dry_run}")
     start = time.time()
-    # Load access key
-    secret_client = secretmanager.SecretManagerServiceClient()
-    secret_response = secret_client.access_secret_version(request=SECRET_REQUEST)
-    key = secret_response.payload.data.decode("UTF-8")
-
     school_year = get_current_school_year()
 
     # Open the bucket
@@ -138,21 +122,28 @@ def crawl_schedules():
     schedules = {}
     errors = 0
 
-    session = requests.Session()
+    four11_client = four11.Four11Client()
+    usernames = [u.username() for u in four11_client.get_people()]
+    usernames.remove("dyezbick")
 
     for username in usernames:
         try:
             schedules[username] = download_schedule_with_retry(
-                session, key, username, school_year
+                four11_client, username, school_year
             )
+            if verbose:
+                print(f"Crawled user {username}")
         except NameError:
             errors += 1
-            print("Could not crawl user {}".format(username))
+            print(f"Could not crawl user {username}")
 
     print(f"Schedule crawl completed, {len(schedules)} downloaded, {errors} errors")
 
-    # First, do some sanity checks
+    # First, do some sanity checks that all users are accounted for, that the number of
+    # errors is reasonable, and that schedules have the right shape
+
     assert len(schedules) + errors == len(usernames)
+    assert errors < MAX_ERRORS
     for username, schedule in schedules.items():
         assert len(schedule["classes"]) == 3
         for trimester in schedule["classes"]:
@@ -161,12 +152,8 @@ def crawl_schedules():
 
     print("Schedules passed sanity check")
 
-    # Now do the upload
-    schedule_blob = data_bucket.blob("schedules.json")
-    schedule_blob.upload_from_string(json.dumps(schedules))
+    # Now do the upload, unless it's a dry run
+    if not dry_run:
+        schedule_blob = data_bucket.blob("schedules.json")
+        schedule_blob.upload_from_string(json.dumps(schedules))
     print("Schedule crawl took {:.2f} seconds".format(time.time() - start))
-
-
-if __name__ == "__main__":
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "../service_account.json"
-    crawl_schedules()

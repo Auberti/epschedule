@@ -46,30 +46,30 @@ function about() {
 function openSettings() {
   var dialog = document.getElementById("dialog");
   dialog.open();
-}
-function submitChangePassword() {
-  var data = new FormData();
-  var oldPassword = document.getElementById("oldpassword")
-  var newPassword = document.getElementById("newpassword")
-  data.append('oldpassword', oldPassword.value)
-  data.append('newpassword', newPassword.value)
+
   xhr = new XMLHttpRequest();
   xhr.onreadystatechange = function() {
     if (xhr.readyState == 4 && xhr.status==200) {
       result = JSON.parse(xhr.responseText);
-      if (!result.error) {
-        renderToast("Password changed successfully.");
-        oldPassword.value = "";
-        newPassword.value = "";
-      } else {
+      if (result.error) {
         console.log(result.error);
-        renderToast(result.error);
       }
     }
   }
-  xhr.open("POST", "changepassword", true);
-  xhr.send(data);
+  xhr.onload = function() {
+    const privacyDataOutput = JSON.parse(xhr.response);
+
+    var sharePhoto = document.getElementById("sharephototoggle");
+    var shareSchedule = document.getElementById("sharescheduletoggle");
+
+    sharePhoto.checked = privacyDataOutput.share_photo;
+    shareSchedule.checked = privacyDataOutput.share_schedule;
+  }
+
+  xhr.open("GET", "privacy", true);
+  xhr.send();
 }
+
 function submitUpdatePrivacy() {
   var share_photo = document.getElementById("sharephototoggle");
   var share_schedule = document.getElementById("sharescheduletoggle");
@@ -137,6 +137,30 @@ function getInitialDate() {
     date = FIRST_DAY;
   }
   return date;
+}
+function dateToNextTri() {
+  // TRI_START_ARR stores all the start of tri dates
+  let goToTri = -1; // stores index of trimester you want to go to
+  // default to -1 if no tri is greater than current date
+  for (let currLooking = 0; currLooking < 3; currLooking++) {
+    if (globalDate < triStartDates[currLooking]) {
+      // located the tri to go to
+      goToTri = currLooking; // set it and break
+      break;
+    }
+  }
+  if (goToTri == -1) {
+    // if it is greater than the start of the spring tri
+    // then loop back to the fall tri
+    goToTri = 0;
+  }
+  // adjust the date to reflect this
+  specifyDate(triStartDates[goToTri])
+}
+function specifyDate(goToDate) {
+  globalDate = new Date(goToDate);
+  console.log(globalDate);
+  updateMainSchedule();
 }
 function dateBack() {
   adjustDate(globalDate, -1);
@@ -390,6 +414,15 @@ function getSchool(grade) {
   }
 }
 
+function getTermId(dateObj) {
+  for (var termId = 0; termId < 2; termId++) {
+    if (dateObj < triStartDates[termId + 1])
+      break;
+  }
+  console.log("Converted " + dateObj + " to a term ID of " + termId);
+  return termId;
+}
+
 function toTwoDig(num) {
   var s = num.toString();
   if (s.length == 1) {
@@ -617,15 +650,8 @@ function dateIsCurrentDay(d1) {
 }
 
 function renderSchedule(dateObj, schedule, type, scheduleElement, lunch_list, expandable = true) {
+  termId = getTermId(dateObj);
 
-  if (dateObj > wintTriEndDate) {
-    termId = 2;
-  } else if (globalDate > fallTriEndDate) {
-    termId = 1;
-  } else {
-    termId = 0;
-  }
-  console.log("Converted " + dateObj + " to a term ID of " + termId);
   // Either MS or US
   if (type == "full" || type == "lite") {
     var school = getSchool(schedule.grade);

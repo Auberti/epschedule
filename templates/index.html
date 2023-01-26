@@ -7,6 +7,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <script src="https://epschedule-static.storage.googleapis.com/bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+  <script src="https://kit.fontawesome.com/a076d05399.js" crossorigin="anonymous"></script> <!-- gets icons -->
   <link rel="import" href="https://epschedule-static.storage.googleapis.com/bower_components/polymer/polymer.html">
   <link rel="import" href="https://epschedule-static.storage.googleapis.com/bower_components/font-roboto/roboto.html">
   <link rel="import" href="https://epschedule-static.storage.googleapis.com/bower_components/iron-flex-layout/iron-flex-layout.html">
@@ -42,9 +43,11 @@
     var userSchedule = {{ schedule | safe }};
     var days = {{days | safe }};
     var lunches = {{lunches | safe}};
-    // Multiply by 1000 to account for milliseconds
-    var fallTriEndDate = new Date({{fall_end_unix | safe}});
-    var wintTriEndDate = new Date({{wint_end_unix | safe}});
+    var termStarts = {{ term_starts | safe}};
+    var triStartDates = [];
+    for (var i = 0; i < 3; i++) {
+        triStartDates.push(new Date(termStarts[i]));
+    }
   </script>
   <script src="static/js/index.js"></script>
 </head>
@@ -59,14 +62,6 @@
           <div class="image-container">
             <img src="static/images/epslogo.jpg">
           </div>
-          <!--<paper-icon-item onclick="skipToWinter()">
-            <iron-icon class="drawer-icon" icon="device:brightness-low" item-icon></iron-icon>
-            <span>See winter schedule</span>
-          </paper-icon-item>
-          <paper-icon-item onclick="skipToSpring()">
-            <iron-icon class="drawer-icon" icon="device:brightness-high" item-icon></iron-icon>
-            <span>See spring schedule</span>
-          </paper-icon-item>-->
           <paper-icon-item onclick="signOut()">
             <iron-icon class="drawer-icon" icon="account-circle" item-icon>
             </iron-icon>
@@ -118,6 +113,14 @@
               <paper-icon-button class="rightfloat" icon="arrow-forward"
                onclick="dateForward()">
               </paper-icon-button>
+              <div class="tooltip">
+                <span class="tooltiptext">Skip to Next Trimester</span>
+                <paper-icon-button class="rightfloat" 
+                src="https://media.discordapp.net/attachments/893657462790557716/1053033456306761768/output-onlinepngtools.png"
+                alt="Skip to Next Trimester" 
+                onclick="dateToNextTri()">
+                </paper-icon-button>
+              </div>
               <paper-icon-button class="rightfloat" icon="search"
                onclick="openSearchBar()">
               </paper-icon-button>
@@ -134,12 +137,6 @@
           </neon-animated-pages>
         </paper-toolbar>
         <div id="container" class="container" layout="" vertical="" center="">
-          <div id="prescreen" style="text-align:center; background-color:white;">
-            <p style="padding:12px; margin-bottom:12px; margin-top:0px; font-size:1.4rem; font-weight:300;">
-            <a style="color:black; text-decoration:none;" href="https://prescreen.eastsideprep.org/user" target="_blank">⚕️ Fill out Prescreen
-            </a>
-            </p>
-          </div>
           <x-schedule id="mainschedule" show="all"></x-schedule>
         </div>
       </paper-header-panel>
@@ -160,24 +157,26 @@
 
 
 
-  <paper-dialog id="about">
+  <paper-dialog class="about-dialog" id="about">
     <div id="aboutpanel">
       <h2>About</h2>
       <div>EPSchedule Club: 
         <p>---A club designated to maintain this website and add changes</p>
         <p>---We meet in TMAC-007, every Thursday during Middle Band</p>
       </div>
-      <div>Club Leader: Kalie Uberti: 
-        <a href="mailto:kuberti@eastsideprep.org">kuberti@eastsideprep.org</a>
-        <p>---Club leader and manager of this project</p>
-      </div>
-      <div>Angad Josan: 
+      <div>Club Leaders: Angad Josan and Ryan Li:
         <a href="mailto:ajosan25@eastsideprep.org">ajosan25@eastsideprep.org</a>
-        <p>---</p>
-      </div>
-      <div>Ryan Li: 
         <a href="mailto:rli@eastsideprep.org">rli@eastsideprep.org</a>
-        <p>---Created this about page</p>
+        <p>---Club leaders and managers of this project</p>
+        <p>---Created Lunch Updates</p>
+      </div>
+      <div>Jack Goetzmann: 
+        <a href="mailto:jgoetzmann@eastsideprep.org">jgoetzmann@eastsideprep.org</a>
+        <p>---Added commenting and work on the front end</p>
+      </div>
+      <div>Akash Shendure: 
+        <a href="mailto:ashendure@eastsideprep.org">ashendure@eastsideprep.org</a>
+        <p>---Edited the prescreen application</p>
       </div>
     </div>
   </paper-dialog>
@@ -192,12 +191,12 @@
       <h3 class="privacypaneltitle">Privacy</h3>
       <div class="inlinesettingsswitch">
         <span class="leftfloat padleft">Show other EPS students my photo</span>
-        <paper-toggle-button checked class="rightfloat" id="sharephototoggle">
+        <paper-toggle-button class="rightfloat" id="sharephototoggle">
         </paper-toggle-button>
       </div>
       <div class="inlinesettingsswitch">
         <span class="leftfloat padleft">Show other EPS students my schedule</span>
-        <paper-toggle-button checked class="rightfloat" id="sharescheduletoggle">
+        <paper-toggle-button class="rightfloat" id="sharescheduletoggle">
         </paper-toggle-button>
       </div>
       <paper-button onclick="submitUpdatePrivacy()" raised

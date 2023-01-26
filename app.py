@@ -2,6 +2,7 @@ import copy
 import datetime
 import json
 import os
+import re
 import time
 
 import google.oauth2.id_token
@@ -11,6 +12,7 @@ from google.cloud import datastore, secretmanager, storage
 
 from cron.photos import crawl_photos, hash_username
 from cron.schedules import crawl_schedules
+from cron.update_lunch import get_lunches_since_date, read_lunches
 
 app = Flask(__name__)
 
@@ -18,15 +20,16 @@ verify_firebase_token = None
 datastore_client = None
 SCHEDULE_INFO = None
 DAYS = None
-FALL_TRI_END = datetime.datetime(2021, 11, 23, 15, 30, 0, 0)
-WINT_TRI_END = datetime.datetime(2022, 3, 11, 15, 30, 0, 0)
+TERM_STARTS = []
 
 
 def init_app(test_config=None):
+    """Initialize the app and set up global variables."""
     global verify_firebase_token
     global datastore_client
     global SCHEDULE_INFO
     global DAYS
+    global TERM_STARTS
     app.permanent_session_lifetime = datetime.timedelta(days=3650)
     if test_config is None:
         # Authenticate ourselves
@@ -54,10 +57,40 @@ def init_app(test_config=None):
         datastore_client = datastore.Client()
     else:
         app.config.from_mapping(test_config)
-        verify_firebase_token = lambda token: json.loads(token)
+
+        def verify_firebase_token(token):
+            return json.loads(token)
+
         datastore_client = app.config["DATASTORE"]
         SCHEDULE_INFO = app.config["SCHEDULES"]
         DAYS = app.config["MASTER_SCHEDULE"]
+    TERM_STARTS = get_term_starts(DAYS[0])
+
+
+def get_term_starts(days):
+    """Return a list of datetime objects for the start of each trimester."""
+    return [
+        find_day(days, ".*"),
+        find_day(days, ".*End.*Fall Term") + datetime.timedelta(days=1),
+        find_day(days, ".*End.*Winter Term") + datetime.timedelta(days=1),
+    ]
+
+
+def find_day(days, regex):
+    """Find the first day that matches the given regex"""
+    for day in days:
+        if re.match(regex, days[day]):
+            return datetime.datetime.strptime(day, "%Y-%m-%d").date()
+    assert False, f"No day matched {regex}"
+
+
+def get_term_id():
+    """Return the current trimester index (fall=0, winter=1, spring=2)"""
+    now = datetime.datetime.now()
+    for i in range(len(TERM_STARTS) - 1):
+        if now < TERM_STARTS[i + 1]:
+            return i
+    return 2
 
 
 def username_to_email(username):
@@ -68,19 +101,15 @@ def is_teacher_schedule(schedule):
     return not schedule["grade"]
 
 
-def get_term_id():
-    now = datetime.datetime.now()
-    if now < FALL_TRI_END:
-        default = 0
-    elif now < WINT_TRI_END:
-        default = 1
-    else:
-        default = 2
-    return request.form.get("input_name", default)
-
-
 def get_schedule_data():
     return SCHEDULE_INFO
+
+
+def get_schedule(username):
+    schedules = get_schedule_data()
+    if username not in schedules:
+        return None
+    return schedules[username]
 
 
 def gen_photo_url(username, icon=False):
@@ -95,13 +124,6 @@ def gen_login_response():
     session.pop("username", None)
     template.set_cookie("token", "", expires=0)
     return template
-
-
-def get_schedule(username):
-    schedules = get_schedule_data()
-    if username not in schedules:
-        return None
-    return schedules[username]
 
 
 def get_user_key(username):
@@ -156,9 +178,12 @@ def main():
             schedule=json.dumps(get_schedule(session["username"])),
             days=json.dumps(DAYS),
             components="static/components.html",
-            lunches="[]",
-            fall_end_unix=str(int(time.mktime(FALL_TRI_END.timetuple())) * 1000),
-            wint_end_unix=str(int(time.mktime(WINT_TRI_END.timetuple())) * 1000),
+            # gets the last 28 days of lunches
+            lunches=get_lunches_since_date(
+                datetime.date.today() - datetime.timedelta(28)
+            ),
+            # gets the trimester starts in a format JS can parse
+            term_starts=json.dumps([d.isoformat() for d in TERM_STARTS]),
         )
     )
     response.set_cookie("token", "", expires=0)
@@ -182,7 +207,7 @@ def handle_class(period):
     return json.dumps(class_schedule)
 
 
-### Functions to generate and censor class schedules
+# Functions to generate and censor class schedules
 
 # List of people who opted out of photo sharing
 def gen_opted_out_table():
@@ -212,7 +237,7 @@ def get_class_schedule(user_class, term_id, censor=True):
                     "name"
                 ] == "Free Period":
                     student = {
-                        "firstname": schedule["firstname"],
+                        "firstname": get_first_name(schedule),
                         "lastname": schedule["lastname"],
                         "grade": schedule["grade"],
                         "username": schedule["username"],
@@ -323,7 +348,7 @@ def handle_period(period):
     )
 
 
-### Functions to generate period information
+# Functions to generate period information
 
 
 def get_free_rooms(period, term):
@@ -390,7 +415,12 @@ def handle_settings():
     user = get_database_entry(session["username"])
 
     if request.method == "GET":
-        return json.dumps(dict(user.items()))
+        user_privacy_dict_raw = dict(user.items())
+        user_privacy_dict = {
+            "share_photo": user_privacy_dict_raw["share_photo"],
+            "share_schedule": user_privacy_dict_raw["share_schedule"],
+        }
+        return json.dumps(user_privacy_dict)
 
     elif request.method == "POST":
         user.update(
@@ -410,12 +440,16 @@ def handle_search(keyword):
 
     results = []
     for schedule in get_schedule_data().values():
-        test_keyword = schedule["firstname"] + " " + schedule["lastname"]
+        test_keyword = get_first_name(schedule) + " " + schedule["lastname"]
         if keyword.lower() in test_keyword.lower():
             results.append({"name": test_keyword, "username": schedule["username"]})
             if len(results) >= 5:  # We only display five results
                 break
     return json.dumps(results)
+
+
+def get_first_name(schedule):
+    return schedule.get("preferred_name") or schedule["firstname"]
 
 
 # This is a post because it changes things
@@ -438,7 +472,7 @@ def handle_cron_photos():
     return "OK"
 
 
-@app.route("/cron/lunches")
+@app.route("/cron/update_lunch")
 def handle_cron_lunches():
-    # update_lunch.read_lunches()
+    read_lunches()
     return "OK"
